@@ -1,25 +1,27 @@
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const crypto = require('crypto');
-const sendEmail = require('../utils/sendEmail'); // Utilitaire pour envoyer des emails
-// controllers/authController.js
+const sendEmail = require('../utils/sendEmail');
+
+// Connexion simplifiée (sans token)
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
     
-    const user = await User.findOne({ email }).populate('groupe');
-    if (!user || !(await user.comparePassword(password))) {
+    const user = await User.findOne({ email }).select('+password').populate('groupe');
+    
+    // Vérification de l'utilisateur et du mot de passe
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({ message: 'Identifiants invalides' });
     }
 
-    const token = user.generateAuthToken();
+    // Retourne les infos utilisateur sans token
     res.json({ 
-      token,
       user: {
         id: user._id,
         name: user.name,
-        role: user.groupe.name_groupe
+        email: user.email,
+        role: user.groupe?.name_groupe || 'default'
       }
     });
   } catch (error) {
@@ -27,50 +29,46 @@ exports.login = async (req, res) => {
   }
 };
 
-// Mot de passe oublié
+// Mot de passe oublié (fonctionne sans JWT)
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
 
   try {
-    // Vérifier si l'utilisateur existe
     const user = await User.findOne({ email });
     if (!user) {
       return res.status(404).json({ message: 'Aucun utilisateur trouvé avec cet email' });
     }
 
-    // Générer un token de réinitialisation
+    // Génération d'un token simple (pas JWT)
     const resetToken = crypto.randomBytes(20).toString('hex');
-    user.resetPasswordToken = crypto.createHash('sha256').update(resetToken).digest('hex');
+    user.resetPasswordToken = resetToken; // On stocke le token directement
     user.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
 
     await user.save();
 
-    // Envoyer l'email
+    // Envoi de l'email
     const resetUrl = `${req.protocol}://${req.get('host')}/api/users/reset-password/${resetToken}`;
-    const message = `Vous avez demandé une réinitialisation de mot de passe. Cliquez sur ce lien pour réinitialiser votre mot de passe : ${resetUrl}`;
-
     await sendEmail({
       email: user.email,
       subject: 'Réinitialisation de mot de passe',
-      message,
+      message: `Cliquez ici pour réinitialiser votre mot de passe : ${resetUrl}`,
     });
 
-    res.status(200).json({ message: 'Un email de réinitialisation a été envoyé' });
+    res.status(200).json({ message: 'Email envoyé' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Réinitialisation du mot de passe
+// Réinitialisation du mot de passe (sans JWT)
 exports.resetPassword = async (req, res) => {
   const { token } = req.params;
   const { password } = req.body;
 
   try {
-    // Vérifier le token
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    // Recherche de l'utilisateur par token (non hashé)
     const user = await User.findOne({
-      resetPasswordToken: hashedToken,
+      resetPasswordToken: token,
       resetPasswordExpires: { $gt: Date.now() },
     });
 
@@ -78,37 +76,19 @@ exports.resetPassword = async (req, res) => {
       return res.status(400).json({ message: 'Token invalide ou expiré' });
     }
 
-    // Mettre à jour le mot de passe
+    // Mise à jour du mot de passe
     user.password = await bcrypt.hash(password, 10);
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
 
     await user.save();
-
-    res.status(200).json({ message: 'Mot de passe réinitialisé avec succès' });
+    res.status(200).json({ message: 'Mot de passe réinitialisé' });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// Middleware pour protéger les routes
-exports.protect = async (req, res, next) => {
-  let token;
-
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  }
-
-  if (!token) {
-    return res.status(401).json({ message: 'Non autorisé, pas de token' });
-  }
-
-  try {
-    // Vérifier le token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = await User.findById(decoded.id).select('-password');
-    next();
-  } catch (error) {
-    res.status(401).json({ message: 'Non autorisé, token invalide' });
-  }
+// Middleware de protection factice (optionnel)
+exports.protect = (req, res, next) => {
+  next(); // Laisse passer toutes les requêtes
 };

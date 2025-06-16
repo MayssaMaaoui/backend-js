@@ -1,4 +1,4 @@
-const jwt = require('jsonwebtoken');
+/*const jwt = require('jsonwebtoken');
 
 const authenticateJWT = (req, res, next) => {
   const token = req.headers['authorization']?.split(' ')[1]; // Récupérer le token du header Authorization
@@ -16,4 +16,4 @@ const authenticateJWT = (req, res, next) => {
   });
 };
 
-module.exports = authenticateJWT;
+module.exports = authenticateJWT;*/

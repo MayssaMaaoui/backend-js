@@ -40,59 +40,94 @@ router.post('/register', async (req, res) => {
       if (!user) {
         return res.status(400).json({ message: 'Utilisateur non trouvé' });
       }
-  
-      // Comparaison du mot de passe
+
       const match = await bcrypt.compare(password, user.password);
-  
       if (!match) {
         return res.status(401).json({ message: 'Mot de passe incorrect' });
       }
-  
-      // Générez un token ou d'autres actions ici
-      res.status(200).json({ message: 'Connexion réussie' });
+
+      // Alternative dans la route login
+          const userResponse = {
+            _id: user._id,
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+            poste: user.poste,
+            groupe: user.groupe,
+            profileImage: user.profileImage || 'default.jpg'
+            // ... autres champs sauf le password
+          };
+
+          res.status(200).json({ 
+            message: 'Connexion réussie',
+            user: userResponse
+          });
     } catch (error) {
       res.status(500).json({ message: 'Erreur serveur', error: error.message });
     }
-  });
+});
 
 // Route pour oublier le mot de passe
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
+  
   try {
     const user = await User.findOne({ email });
     if (!user) {
-      return res.status(400).json({ message: 'Utilisateur non trouvé' });
+      // Don't tell the user the email doesn't exist (security best practice)
+      return res.status(200).json({ 
+        message: 'If an account exists with this email, reset instructions have been sent'
+      });
     }
-    const resetToken = crypto.randomBytes(32).toString('hex');
-    user.resetToken = resetToken;
-    user.resetTokenExpiry = Date.now() + 3600000; // 1 heure
-    await user.save(); // Enregistrez une seule fois
 
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenExpiry = Date.now() + 3600000; // 1 hour
+    
+    // Update user with reset token
+    user.resetToken = resetToken;
+    user.resetTokenExpiry = resetTokenExpiry;
+    await user.save();
+
+    // Create reusable transporter object
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: {
-        user: 'mayssamaaoui056@gmail.com',  
-        pass: 'avqb zcie jonv wvjl',  
+        user: process.env.EMAIL_USER || 'mayssamaaoui056@gmail.com',
+        pass: process.env.EMAIL_PASS || 'avqb zcie jonv wvjl',
       },
     });
 
+    // Email options
+    const resetUrl = `http://192.168.1.9:3000/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+    
     const mailOptions = {
-      from: 'mayssamaaoui056@gmail.com',
+      from: '"Your App Name" <mayssamaaoui056@gmail.com>',
       to: email,
-      subject: 'Réinitialisation de mot de passe',
-      text: `Voici votre code de réinitialisation : ${resetToken}`,
+      subject: 'Password Reset Request',
+      html: `
+        <h2>Password Reset</h2>
+        <p>You requested a password reset. Click the link below to reset your password:</p>
+        <a href="${resetUrl}">${resetUrl}</a>
+        <p>This link will expire in 1 hour.</p>
+        <p>If you didn't request this, please ignore this email.</p>
+      `,
     };
-    console.log("Token généré :", resetToken);
 
-
-    transporter.sendMail(mailOptions, (error, info) => {
-      if (error) {
-        return res.status(500).json({ message: 'Erreur lors de l\'envoi de l\'email', error });
-      }
-      res.status(200).json({ message: 'Code de réinitialisation envoyé par email' });
+    // Send email
+    await transporter.sendMail(mailOptions);
+    console.log(`Password reset email sent to ${email}`);
+    
+    res.status(200).json({ 
+      message: 'If an account exists with this email, reset instructions have been sent'
     });
+
   } catch (error) {
-    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    console.error('Forgot password error:', error);
+    res.status(500).json({ 
+      message: 'An error occurred while processing your request',
+      error: error.message 
+    });
   }
 });
 
@@ -113,7 +148,7 @@ router.get('/get-reset-token', async (req, res) => {
 });
 
 // Dans votre backend Node.js
-router.get('/me', authenticateJWT, async (req, res) => {
+router.get('/me', async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
       .select('-password')
@@ -179,17 +214,72 @@ const handleUploadError = (err, req, res, next) => {
     next(err);
   };
   
+  const sendWelcomeEmail = async (email, password, name) => {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: 'mayssamaaoui056@gmail.com',  
+        pass: 'avqb zcie jonv wvjl',  
+      },
+    });
+  
+    const mailOptions = {
+      from: 'mayssamaaoui056@gmail.com',
+      to: email,
+      subject: 'Bienvenue sur notre application!',
+      html: `
+        <h1>Bienvenue ${name}!</h1>
+        <p>Votre compte a été créé avec succès.</p>
+        <p>Voici vos informations de connexion :</p>
+        <ul>
+          <li><strong>Email:</strong> ${email}</li>
+          <li><strong>Mot de passe temporaire:</strong> ${password}</li>
+        </ul>
+        <p>Nous vous recommandons de changer votre mot de passe après votre première connexion.</p>
+      `,
+    };
+  
+    await transporter.sendMail(mailOptions);
+  };
+
   // Modifiez la route comme ceci :
-  router.post(
-    '/',
-    upload.single('photo'),
-    (req, res, next) => {
-      // Traitement normal
-      next();
-    },
-    handleUploadError, // Utilisez le middleware de gestion d'erreurs
-    userController.createUser
-  );
+  router.post('/', async (req, res) => {
+    try {
+      const { name, email, password, phone, poste, groupe } = req.body;
+      
+      // Hachage du mot de passe
+      const hashedPassword = await bcrypt.hash(password, 10);
+  
+      const newUser = new User({
+        name,
+        email,
+        password: hashedPassword,
+        phone,
+        poste,
+        groupe
+      });
+  
+      await newUser.save();
+  
+      // Envoi de l'email de bienvenue (en arrière-plan, ne pas bloquer la réponse)
+      sendWelcomeEmail(email, password, name)
+        .catch(error => console.error('Erreur lors de l\'envoi de l\'email:', error));
+  
+      res.status(201).json({ 
+        message: 'Utilisateur créé avec succès',
+        user: {
+          _id: newUser._id,
+          name: newUser.name,
+          email: newUser.email,
+          phone: newUser.phone,
+          poste: newUser.poste,
+          groupe: newUser.groupe
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ message: 'Erreur serveur', error: error.message });
+    }
+  });
 router.post('/login', authController.login); // Connexion
 router.post('/forgot-password', authController.forgotPassword); // Mot de passe oublié
 router.post('/reset-password/:token', authController.resetPassword); // Réinitialisation du mot de passe

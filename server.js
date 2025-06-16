@@ -20,6 +20,7 @@ const groupRoutes = require('./routes/groups');
 // Utilisation des routes
 app.use('/api/users', userRoutes);
 app.use('/api/groups', groupRoutes);
+app.use('/api', userRoutes);
 
 // Middleware pour gérer les erreurs de JSON malformé
 app.use((err, req, res, next) => {
@@ -51,3 +52,5 @@ server.on('error', error => {
     app.listen(Number(PORT) + 1);
   }
 });
+
+
